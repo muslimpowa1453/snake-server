@@ -29,7 +29,7 @@ wss.on('connection', (ws) => {
         length: 50, 
         color: color, 
         name: "Guest",
-        path: [] // We will store a simplified path for others to draw
+        path: [] 
     };
 
     // Send the player their own ID so they know who they are
@@ -56,11 +56,23 @@ wss.on('connection', (ws) => {
         }
     });
 
-    // When a player disconnects, remove them
+    // When a player disconnects
     ws.on('close', () => {
         console.log(`Player ${id} disconnected`);
-        delete players[id];
-        // Tell everyone else to remove this player
+        
+        if (players[id]) {
+            // Broadcast a 'kill_loot' event so clients can turn this snake into food
+            // We send the path so clients can render the explosion exactly where the snake was
+            broadcast({ 
+                type: 'kill_loot', 
+                path: players[id].path, 
+                color: players[id].color 
+            });
+
+            delete players[id];
+        }
+        
+        // Tell everyone else to remove this player object
         broadcast({ type: 'remove', id: id });
     });
 });
