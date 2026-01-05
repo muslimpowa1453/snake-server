@@ -13,6 +13,9 @@ console.log(`Snake Server Started on port ${port}`);
 // Structure: { id: { x, y, angle, length, color, name } }
 let players = {};
 
+// SEGMENT SPACING (Match with client)
+const SEGMENT_SPACING = 5;
+
 // When a player connects
 wss.on('connection', (ws) => {
     // Generate a unique ID for this player
@@ -29,7 +32,7 @@ wss.on('connection', (ws) => {
         length: 50, 
         color: color, 
         name: "Guest",
-        path: [] 
+        path: [] // We will store a simplified path for others to draw
     };
 
     // Send the player their own ID so they know who they are
@@ -49,6 +52,7 @@ wss.on('connection', (ws) => {
                     players[id].length = data.length;
                     players[id].path = data.path; // Receive path history
                     players[id].name = data.name;
+                    players[id].color = players[id].color; // Keep color consistent
                 }
             }
         } catch (e) {
@@ -56,23 +60,20 @@ wss.on('connection', (ws) => {
         }
     });
 
-    // When a player disconnects
+    // When a player disconnects, remove them
     ws.on('close', () => {
         console.log(`Player ${id} disconnected`);
         
-        if (players[id]) {
-            // Broadcast a 'kill_loot' event so clients can turn this snake into food
-            // We send the path so clients can render the explosion exactly where the snake was
-            broadcast({ 
-                type: 'kill_loot', 
-                path: players[id].path, 
-                color: players[id].color 
-            });
-
-            delete players[id];
+        // SERVER SIDE LOOT GENERATION
+        // When player disconnects, transform them into food
+        if (players[id] && players[id].path && players[id].path.length > 0) {
+            const loot = generateLootFromPath(players[id]);
+            // Broadcast the food to everyone else
+            broadcast({ type: 'spawn_food', food: loot });
         }
-        
-        // Tell everyone else to remove this player object
+
+        delete players[id];
+        // Tell everyone else to remove this player
         broadcast({ type: 'remove', id: id });
     });
 });
@@ -84,6 +85,33 @@ function broadcast(data) {
             client.send(JSON.stringify(data));
         }
     });
+}
+
+// Helper: Generate Food from Path
+function generateLootFromPath(player) {
+    const foodDrops = [];
+    // We recreate the body points roughly
+    // This is a simplified version of client-side rendering logic
+    let path = player.path || [];
+    // Ensure we have the head
+    path.push({ x: player.x, y: player.y });
+    
+    // Simply scatter food along the path points
+    // We skip every few points to not overload the network, but make enough food
+    const step = 2; 
+    for(let i = 0; i < path.length; i += step) {
+        // Random chance to drop food at this segment
+        if (Math.random() > 0.3) {
+            foodDrops.push({
+                x: path[i].x + (Math.random() - 0.5) * 10,
+                y: path[i].y + (Math.random() - 0.5) * 10,
+                r: 8 + Math.random() * 8, // Random size
+                color: player.color, // Food takes color of snake
+                type: Math.floor(Math.random() * 3) // Random food type
+            });
+        }
+    }
+    return foodDrops;
 }
 
 // The "Heartbeat" Loop
