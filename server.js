@@ -54,6 +54,9 @@ wss.on('connection', (ws) => {
                     players[id].name = data.name;
                     players[id].color = players[id].color; // Keep color consistent
                 }
+            } else if (data.type === 'quit') {
+                // Explicit quit message handling
+                removePlayer(id);
             }
         } catch (e) {
             console.error("Invalid message received");
@@ -62,20 +65,28 @@ wss.on('connection', (ws) => {
 
     // When a player disconnects, remove them
     ws.on('close', () => {
-        console.log(`Player ${id} disconnected`);
-        
+        // Only run removal if the player still exists (hasn't been quit explicitly)
+        if (players[id]) {
+            console.log(`Player ${id} disconnected via socket close`);
+            removePlayer(id);
+        }
+    });
+
+    function removePlayer(playerId) {
+        if (!players[playerId]) return;
+
         // SERVER SIDE LOOT GENERATION
         // When player disconnects, transform them into food
-        if (players[id] && players[id].path && players[id].path.length > 0) {
-            const loot = generateLootFromPath(players[id]);
+        if (players[playerId].path && players[playerId].path.length > 0) {
+            const loot = generateLootFromPath(players[playerId]);
             // Broadcast the food to everyone else
             broadcast({ type: 'spawn_food', food: loot });
         }
 
-        delete players[id];
+        delete players[playerId];
         // Tell everyone else to remove this player
-        broadcast({ type: 'remove', id: id });
-    });
+        broadcast({ type: 'remove', id: playerId });
+    }
 });
 
 // Broadcast function: sends data to ALL connected players
