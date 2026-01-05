@@ -1,12 +1,13 @@
 /* ========================================== */
-/* SERVER.JS                    */
+/* SERVER.JS                                  */
 /* ========================================== */
 const WebSocket = require('ws');
 
-// Create a WebSocket Server on port 10000 (Render uses this port)
-const wss = new WebSocket.Server({ port: 10000 });
+// Use process.env.PORT for Render, fallback to 10000 locally
+const port = process.env.PORT || 10000;
+const wss = new WebSocket.Server({ port: port });
 
-console.log("Snake Server Started on port 10000");
+console.log(`Snake Server Started on port ${port}`);
 
 // Store all connected players
 // Structure: { id: { x, y, angle, length, color, name } }
