@@ -1,7 +1,7 @@
 {
-  "name": "snake-server",
+  "name": "wormate-clone-server",
   "version": "1.0.0",
-  "description": "Multiplayer Snake Server",
+  "description": "A node.js backend for Wormate clone",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
