@@ -1,14 +1,12 @@
 {
-  "name": "wormate-server",
+  "name": "snake-server",
   "version": "1.0.0",
+  "description": "Multiplayer Snake Server",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "ws": "^8.14.2"
-  },
-  "engines": {
-    "node": "14.x"
+    "ws": "^8.13.0"
   }
 }
