@@ -21,16 +21,16 @@ wss.on('connection', (ws) => {
     // Generate a unique ID for this player
     const id = Math.random().toString(36).substring(2, 9);
     let color = `hsl(${Math.random() * 360}, 100%, 50%)`;
-    
+
     console.log(`Player ${id} connected`);
 
     // Initialize player data
     players[id] = {
-        x: 0, 
-        y: 0, 
-        angle: 0, 
-        length: 50, 
-        color: color, 
+        x: 0,
+        y: 0,
+        angle: 0,
+        length: 50,
+        color: color,
         name: "Guest",
         path: [] // We will store a simplified path for others to draw
     };
@@ -106,11 +106,11 @@ function generateLootFromPath(player) {
     let path = player.path || [];
     // Ensure we have the head
     path.push({ x: player.x, y: player.y });
-    
+
     // Simply scatter food along the path points
     // We skip every few points to not overload the network, but make enough food
-    const step = 2; 
-    for(let i = 0; i < path.length; i += step) {
+    const step = 2;
+    for (let i = 0; i < path.length; i += step) {
         // Random chance to drop food at this segment
         if (Math.random() > 0.3) {
             foodDrops.push({
