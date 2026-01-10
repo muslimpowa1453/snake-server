@@ -460,17 +460,4 @@ setInterval(() => {
             }
         }
     }
-}, 5000);    for (const id in players) {
-        pack.push({
-            id: id,
-            x: players[id].x,
-            y: players[id].y,
-            angle: players[id].angle,
-            path: players[id].path,
-            color: players[id].color,
-            name: players[id].name,
-            length: players[id].length
-        });
-    }
-    broadcast({ type: 'state', players: pack });
-}, 50);
+}, 5000);
