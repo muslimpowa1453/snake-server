@@ -1,7 +1,7 @@
 {
-  "name": "wormate-server-authoritative",
+  "name": "wormate-server-fixed",
   "version": "1.0.0",
-  "description": "Authoritative Wormate Clone Server",
+  "description": "Wormate Clone with HTTP and WS",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
