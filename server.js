@@ -1,5 +1,5 @@
 /* ========================================== */
-/* SERVER.JS (RELAY MODE - RESTORED JUICE)     */
+/* SERVER.JS (RELAY MODE)                       */
 /* ========================================== */
 const http = require('http');
 const fs = require('fs');
@@ -76,7 +76,7 @@ wss.on('connection', (ws) => {
                     if (!other.path || other.path.length === 0) continue;
 
                     // Simple head vs body check
-                    // We skip the "neck" area to prevent accidental head-to-heads or confusion
+                    // We skip "neck" area to prevent accidental head-to-heads or confusion
                     const skip = 10; 
                     let hit = false;
                     const myR = getRadius(data.length);
@@ -121,7 +121,7 @@ wss.on('connection', (ws) => {
                     length: data.length,
                     name: data.name,
                     color: players[id].color,
-                    path: data.path // We relay the full path so others see the shape perfectly
+                    path: data.path // We relay the full path so others see shape perfectly
                 };
 
                 wss.clients.forEach((client) => {
@@ -145,11 +145,12 @@ wss.on('connection', (ws) => {
     });
 
     ws.on('close', () => {
+        console.log(`Player ${id} disconnected via WebSocket`);
+        // Server logic: If we don't hear from you, we assume you are gone.
         if (players[id]) {
-            broadcast({ type: 'remove', id: id });
-            // Generate loot
-            broadcast({ type: 'spawn_food', food: generateLoot(players[id].path, players[id].length, players[id].color) });
-            delete players[id];
+            // Optional: Spawn loot immediately on disconnect to match client-side feel?
+            // broadcast({ type: 'spawn_food', food: generateLoot(players[id].path, players[id].length, players[id].color) });
+            // delete players[id]; // Comment this out to let client handle it cleanly, or delete to force cleanup.
         }
     });
 });
