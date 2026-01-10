@@ -1,5 +1,5 @@
 /* ========================================== */
-/* SERVER.JS (HTTP + WEBSOCKET)               */
+/* SERVER.JS (FIXED FOR RENDER)                */
 /* ========================================== */
 const http = require('http');
 const fs = require('fs');
@@ -9,56 +9,53 @@ const WebSocket = require('ws');
 // CONFIGURATION
 const PORT = process.env.PORT || 10000;
 
-// 1. HTTP SERVER
+// 1. HTTP SERVER (Required for Render health checks)
 const server = http.createServer((req, res) => {
-    console.log(`HTTP Request: ${req.url}`);
+    // We log requests to help debug
+    console.log(`HTTP Request: ${req.method} ${req.url}`);
     
+    // Serve index.html if accessed directly (optional, but good for testing)
     if (req.url === '/' || req.url === '/index.html') {
         fs.readFile(path.join(__dirname, 'index.html'), (err, data) => {
             if (err) {
                 res.writeHead(500);
-                res.end('Error loading index.html. Make sure index.html is in the same folder as server.js.');
-                console.error(err);
+                res.end('Error loading index.html');
                 return;
             }
             res.writeHead(200, { 'Content-Type': 'text/html' });
             res.end(data);
         });
     } else {
-        res.writeHead(404);
-        res.end('Not Found');
+        // Health check endpoint for Render
+        res.writeHead(200);
+        res.end('OK');
     }
 });
 
-// 2. WEBSOCKET SERVER
+// 2. WEBSOCKET SERVER (Attached to HTTP)
 const wss = new WebSocket.Server({ server });
 
-console.log(`HTTP & WebSocket Server initialized on port ${PORT}`);
+console.log(`Server initializing on port ${PORT}`);
 
-// --- GAME CONFIGURATION ---
+// --- GAME LOGIC ---
 const MAP_RADIUS = 6000;
 const SEGMENT_SPACING = 5;
 const PATH_SPACING = 5;
 const BASE_SPEED = 3.0; 
 const BOOST_SPEED = 6.0;
 const TURN_SPEED = 0.08;
-const TURN_SPEED_BOOST = 0.06;
 const BOT_COUNT = 20;
 const TICK_RATE = 30; 
-const TIMEOUT_MS = 10000;
 
-// --- GAME STATE ---
 let players = {};
 let bots = [];
 let foods = [];
 let powerups = [];
 let idCounter = 0;
 
-// --- UTILS ---
 const getDistance = (x1, y1, x2, y2) => Math.hypot(x2 - x1, y2 - y1);
 const generateId = () => (++idCounter).toString(36);
 
-// --- ENTITY CLASS ---
 class Snake {
     constructor(id, x, y, isBot = false, name = "Bot") {
         this.id = id;
@@ -67,31 +64,23 @@ class Snake {
         this.angle = Math.random() * Math.PI * 2;
         this.targetAngle = this.angle;
         this.length = 50;
-        this.width = 20;
         this.color = isBot ? `hsl(${Math.random() * 360}, 100%, 50%)` : null;
         this.name = name;
         this.path = [];
-        
         for(let i=0; i<this.length * SEGMENT_SPACING; i+=PATH_SPACING) {
             this.path.push({x: x, y: y});
         }
-        
-        this.speed = BASE_SPEED;
         this.boosting = false;
         this.isBot = isBot;
         this.dead = false;
-        this.score = Math.floor(this.length * 10);
-        
         this.buffs = { x2: 0, x5: 0, x10: 0, ae: 0, spd: 0 };
         this.kills = 0;
-        this.hsCount = 0;
         this.lastSeen = Date.now();
     }
 
     update(dt) {
         if (this.dead) return;
         const now = Date.now();
-        
         let turnSpd = TURN_SPEED;
         let spd = BASE_SPEED;
 
@@ -161,7 +150,6 @@ class Snake {
     }
 }
 
-// --- GAME FUNCTIONS ---
 function spawnFood(x, y, r, color) {
     if (foods.length > 3000) return; 
     if (x === undefined) {
@@ -195,6 +183,7 @@ function checkCollisions() {
     for (let i = 0; i < allSnakes.length; i++) {
         let s1 = allSnakes[i];
         let r1 = s1.getRadius();
+        // Food
         for (let f = foods.length - 1; f >= 0; f--) {
             const food = foods[f];
             if (getDistance(s1.x, s1.y, food.x, food.y) < r1 + food.r + 5) {
@@ -209,6 +198,7 @@ function checkCollisions() {
                 spawnFood(); 
             }
         }
+        // Powerups
         for (let p = powerups.length - 1; p >= 0; p--) {
             const pup = powerups[p];
             if (getDistance(s1.x, s1.y, pup.x, pup.y) < r1 + pup.r + 5) {
@@ -223,6 +213,7 @@ function checkCollisions() {
                 setTimeout(spawnPowerup, 10000);
             }
         }
+        // Combat
         for (let j = 0; j < allSnakes.length; j++) {
             if (i === j) continue;
             let s2 = allSnakes[j];
@@ -240,7 +231,6 @@ function checkCollisions() {
             if (hit) {
                 s1.die();
                 s2.kills++;
-                if(!s1.isBot) s2.hsCount++;
                 break; 
             }
         }
@@ -268,7 +258,7 @@ function gameLoop() {
         players: Object.values(players).map(p => ({
             id: p.id, x: Math.round(p.x), y: Math.round(p.y),
             a: Math.round(p.angle * 100) / 100, l: Math.round(p.length),
-            c: p.color, n: p.name, p: p.path, b: p.buffs, k: p.kills, hs: p.hsCount
+            c: p.color, n: p.name, p: p.path, b: p.buffs, k: p.kills, hs: p.hs
         })),
         bots: bots.map(b => ({
             id: b.id, x: Math.round(b.x), y: Math.round(b.y),
@@ -332,19 +322,6 @@ wss.on('connection', (ws) => {
     });
 });
 
-// Timeout Monitor
-setInterval(() => {
-    const now = Date.now();
-    for (const id in players) {
-        if (now - players[id].lastSeen > TIMEOUT_MS) {
-            console.log(`Kicking ${id}`);
-            const client = [...wss.clients].find(c => c.id === id);
-            if (client) client.terminate();
-            else { players[id].die(); delete players[id]; }
-        }
-    }
-}, 5000);
-
 server.listen(PORT, () => {
-    console.log(`Game is live at http://localhost:${PORT}`);
+    console.log(`Game Server is listening on port ${PORT}`);
 });
