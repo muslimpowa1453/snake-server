@@ -1,13 +1,14 @@
 /* ========================================== */
-/* SERVER.JS (RELAY MODE)                       */
+/* SERVER.JS (WITH HEARTBEAT / PING)           */
 /* ========================================== */
-const http = require('http');
-const fs = require('fs');
-const path = require('path');
 const WebSocket = require('ws');
 
 // CONFIGURATION
 const PORT = process.env.PORT || 10000;
+
+// PING CONFIGURATION
+// Sends a heartbeat every 2 seconds to keep connection alive
+const PING_INTERVAL = 2000; 
 
 // 1. HTTP SERVER (Health Check)
 const server = http.createServer((req, res) => {
@@ -22,7 +23,6 @@ const wss = new WebSocket.Server({ server });
 console.log(`Server Started on port ${PORT}`);
 
 // --- GAME STATE ---
-// Store minimal state to validate collisions
 let players = {}; 
 
 // --- CONFIG (Matches Client) ---
@@ -154,6 +154,16 @@ wss.on('connection', (ws) => {
         }
     });
 });
+
+// --- GLOBAL HEARTBEAT TIMER ---
+// Sends pings to all connected clients to detect connection drops
+setInterval(() => {
+    wss.clients.forEach((client) => {
+        if (client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify({ type: 'ping' }));
+        }
+    });
+}, PING_INTERVAL);
 
 function broadcast(data) {
     wss.clients.forEach((client) => {
