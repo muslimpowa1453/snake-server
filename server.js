@@ -1,6 +1,9 @@
 /* ========================================== */
-/* SERVER.JS (WITH HEARTBEAT / PING)           */
+/* SERVER.JS (WITH EXPLICIT HTTP IMPORT)       */
 /* ========================================== */
+const http = require('http'); // <--- FIX FOR NODE v22
+const fs = require('fs');
+const path = require('path');
 const WebSocket = require('ws');
 
 // CONFIGURATION
