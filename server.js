@@ -1,25 +1,21 @@
 const WebSocket = require('ws');
 
-// ============== CONFIGURATION ==============
+// ============== CONFIGURATION (AYARLAR) ==============
 const PORT = process.env.PORT || 8080;
-const TICK_RATE = 60;
-const STATE_SEND_RATE = 20;
+const TICK_RATE = 60;            // Saniyedeki güncelleme sayısı
+const STATE_SEND_RATE = 20;      // İstemciye veri gönderme hızı (Düşürülerek lag önlendi)
 const WORLD_RADIUS = 5000;
 const WORLD_CENTER = 5000;
-const MAX_BOTS = 15;
+const MAX_BOTS = 10;             // Bot sayısını ideal seviyeye çektik
 const SNAKE_START_SPEED = 150;
 const SNAKE_BOOST_MULTIPLIER = 2.0;
 const SNAKE_TURN_SPEED = 0.09;
 const SNAKE_START_WIDTH = 25;
-const MAX_BODY_PARTS = 500;
+const MAX_BODY_PARTS = 300;      // Maksimum uzunluğu sunucu sağlığı için sınırladık
 
-// ============== UTILITY ==============
+// ============== UTILITY (YARDIMCI FONKSİYONLAR) ==============
 function generateId() {
     return Math.random().toString(36).substring(2, 15);
-}
-
-function clamp(val, min, max) {
-    return Math.max(min, Math.min(max, val));
 }
 
 function distance(x1, y1, x2, y2) {
@@ -37,7 +33,7 @@ class Snake {
         this.isBot = isBot;
         this.isActive = true;
 
-        // Spawn at random position
+        // Rastgele doğma noktası
         const angle = Math.random() * Math.PI * 2;
         const dist = Math.random() * (WORLD_RADIUS - 500);
         this.x = WORLD_CENTER + Math.cos(angle) * dist;
@@ -57,13 +53,14 @@ class Snake {
         this.growPending = 0;
         this.activeEffects = {};
 
-        // Path history for body rendering
+        // Path history (Kuyruk çizimi için geçmiş)
         this.pathHistory = [];
-        for (let i = 0; i < this.bodyPartsCount * 20; i++) {
+        // Başlangıç için noktaları doldur
+        for (let i = 0; i < this.bodyPartsCount * 5; i++) {
             this.pathHistory.push({ x: this.x, y: this.y });
         }
 
-        // Bot AI
+        // Bot AI değişkenleri
         this.botTarget = { x: this.x, y: this.y };
         this.botTimer = 0;
     }
@@ -79,45 +76,60 @@ class Snake {
             this.updateBotAI(dt);
         }
 
-        // Smooth rotation
+        // Dönüş yumuşatma (Smooth rotation)
         let diff = this.targetAngle - this.rotation;
         while (diff > Math.PI) diff -= Math.PI * 2;
         while (diff < -Math.PI) diff += Math.PI * 2;
+        
+        // Sabit 60 FPS varsayımıyla dönüş hesaplama
         const turnAmount = SNAKE_TURN_SPEED * dt * 60;
+        
         if (Math.abs(diff) < turnAmount) {
             this.rotation = this.targetAngle;
         } else {
             this.rotation += Math.sign(diff) * turnAmount;
         }
 
-        // Speed
+        // Hız hesaplama
         const targetSpeed = this.isBoosting ? this.baseSpeed * SNAKE_BOOST_MULTIPLIER : this.baseSpeed;
+        // Basit lerp ile hız geçişi
         this.currentSpeed += (targetSpeed - this.currentSpeed) * 0.1;
 
-        // Movement
+        // Hareket
         this.x += Math.cos(this.rotation) * this.currentSpeed * dt;
         this.y += Math.sin(this.rotation) * this.currentSpeed * dt;
 
-        // Update path history
-        this.pathHistory.unshift({ x: this.x, y: this.y });
-        const maxHistory = Math.ceil(this.bodyPartsCount * this.pointSeparation * 3);
-        if (this.pathHistory.length > maxHistory) {
-            this.pathHistory.length = maxHistory;
+        // --- OPTİMİZASYON: PATH HISTORY ---
+        // Sadece hareket ettiysek geçmişe ekle
+        if (this.currentSpeed > 0) {
+            this.pathHistory.unshift({ x: this.x, y: this.y });
         }
 
-        // Process growth
+        // Geçmişi temizle (Memory Leak Önleme)
+        // Yılanın boyuna ve genişliğine göre ne kadar geçmiş tutmamız gerektiğini hesapla
+        // +100 güvenlik payı ekliyoruz
+        // MAX 2000 nokta ile sınırlıyoruz (Sunucuyu korumak için en önemli ayar bu)
+        const neededHistory = Math.ceil(this.bodyPartsCount * (this.pointSeparation / (this.currentSpeed * dt || 1)) * 1.5) + 50;
+        const maxHistoryLimit = 2000; 
+        const trimTo = Math.min(neededHistory, maxHistoryLimit);
+
+        if (this.pathHistory.length > trimTo) {
+            this.pathHistory.length = trimTo; // Fazlalığı anında kes
+        }
+
+        // Büyüme mantığı
         if (this.growPending >= 1 && this.bodyPartsCount < MAX_BODY_PARTS) {
             this.bodyPartsCount++;
             this.growPending -= 1;
         }
 
-        // Width growth
-        const sizeBonus = Math.log10(this.score + 100) * 3;
+        // Genişlik büyümesi
+        const sizeBonus = Math.log10(this.score + 100) * 4;
         const targetWidth = SNAKE_START_WIDTH + sizeBonus;
         this.width += (targetWidth - this.width) * dt * 0.1;
-        this.width = Math.min(this.width, 150);
+        this.width = Math.min(this.width, 150); // Maksimum genişlik sınırı
 
-        // Update effects
+        // Efekt süreleri
         for (const key in this.activeEffects) {
             this.activeEffects[key] -= dt;
             if (this.activeEffects[key] <= 0) {
@@ -125,35 +137,41 @@ class Snake {
             }
         }
 
-        // Border collision
+        // Harita dışına çıkma kontrolü
         const distToCenter = distance(this.x, this.y, WORLD_CENTER, WORLD_CENTER);
-        if (distToCenter > WORLD_RADIUS + 20) {
+        if (distToCenter > WORLD_RADIUS + 50) {
             this.die();
         }
     }
 
     updateBotAI(dt) {
         this.botTimer += dt;
-        if (this.botTimer > 3) {
+        if (this.botTimer > (Math.random() * 2 + 1)) {
             this.pickNewBotTarget();
             this.botTimer = 0;
         }
 
-        // Avoid border
+        // Harita sınırından kaçış
         const distToCenter = distance(this.x, this.y, WORLD_CENTER, WORLD_CENTER);
-        if (distToCenter > WORLD_RADIUS - 400) {
-            this.botTarget = { x: WORLD_CENTER, y: WORLD_CENTER };
+        if (distToCenter > WORLD_RADIUS - 600) {
+            // Merkeze doğru dön
+            this.botTarget = { 
+                x: WORLD_CENTER + (Math.random() - 0.5) * 1000, 
+                y: WORLD_CENTER + (Math.random() - 0.5) * 1000
+            };
         }
 
         const dx = this.botTarget.x - this.x;
         const dy = this.botTarget.y - this.y;
         this.targetAngle = Math.atan2(dy, dx);
-        this.isBoosting = Math.random() < 0.01; // Occasional boost
+        
+        // Ara sıra hızlan
+        this.isBoosting = Math.random() < 0.02;
     }
 
     pickNewBotTarget() {
         const angle = Math.random() * Math.PI * 2;
-        const dist = 500 + Math.random() * 1500;
+        const dist = 500 + Math.random() * 2000;
         this.botTarget = {
             x: this.x + Math.cos(angle) * dist,
             y: this.y + Math.sin(angle) * dist
@@ -168,16 +186,22 @@ class Snake {
             const p1 = this.pathHistory[i];
             const p2 = this.pathHistory[i + 1];
             const dist = distance(p1.x, p1.y, p2.x, p2.y);
+            
+            // Sıfır mesafe varsa atla
+            if (dist === 0) continue;
+
             accumulatedDist += dist;
 
-            if (accumulatedDist >= this.pointSeparation) {
+            while (accumulatedDist >= this.pointSeparation && positions.length < this.bodyPartsCount) {
                 const overshoot = accumulatedDist - this.pointSeparation;
-                accumulatedDist = overshoot;
-                const ratio = dist > 0 ? overshoot / dist : 0;
+                const ratio = (dist - overshoot) / dist; // Geriye doğru oran
+                
                 positions.push({
-                    x: p2.x + (p1.x - p2.x) * ratio,
-                    y: p2.y + (p1.y - p2.y) * ratio
+                    x: p1.x + (p2.x - p1.x) * ratio, // P1'den P2'ye doğru
+                    y: p1.y + (p2.y - p1.y) * ratio
                 });
+                
+                accumulatedDist -= this.pointSeparation;
             }
         }
         return positions;
@@ -195,22 +219,40 @@ class Snake {
         this.isActive = false;
     }
 
+    // --- OPTİMİZASYON: VERİ PAKETLEME ---
     toState() {
-        // Compress path for network - send every Nth point
         const compressedPath = [];
-        const step = Math.max(1, Math.floor(this.pathHistory.length / 60));
-        for (let i = 0; i < this.pathHistory.length; i += step) {
-            compressedPath.push(this.pathHistory[i]);
+        
+        // Dinamik kalite ayarı: Yılan ne kadar uzunsa, o kadar seyrek nokta gönder
+        // Bu, dev yılanların interneti tıkamasını önler.
+        let step = 2; // Varsayılan: Her 2 noktada bir al
+        if (this.pathHistory.length > 500) step = 4;
+        if (this.pathHistory.length > 1000) step = 8;
+        
+        // Başlangıç noktasını ekle
+        if (this.pathHistory.length > 0) {
+             // Math.round ile veriyi küçültüyoruz (12.345 -> 12)
+             compressedPath.push({ 
+                 x: Math.round(this.pathHistory[0].x), 
+                 y: Math.round(this.pathHistory[0].y) 
+             });
+        }
+
+        for (let i = step; i < this.pathHistory.length; i += step) {
+            compressedPath.push({
+                x: Math.round(this.pathHistory[i].x),
+                y: Math.round(this.pathHistory[i].y)
+            });
         }
 
         return {
             id: this.id,
             name: this.name,
             skin: this.skin,
-            x: this.x,
-            y: this.y,
-            rotation: this.rotation,
-            width: this.width,
+            x: Math.round(this.x),
+            y: Math.round(this.y),
+            rotation: Number(this.rotation.toFixed(2)), // Virgülden sonra 2 hane yeterli
+            width: Math.round(this.width),
             bodyPartsCount: this.bodyPartsCount,
             score: Math.floor(this.score),
             killCount: this.killCount,
@@ -218,7 +260,7 @@ class Snake {
             isBoosting: this.isBoosting,
             isBot: this.isBot,
             pathPoints: compressedPath,
-            activeEffects: { ...this.activeEffects }
+            activeEffects: this.activeEffects
         };
     }
 }
@@ -237,10 +279,10 @@ class Food {
     toState() {
         return {
             id: this.id,
-            x: this.x,
-            y: this.y,
+            x: Math.round(this.x), // Yuvarlama
+            y: Math.round(this.y),
             type: this.type,
-            value: this.value
+            v: this.value // 'value' yerine 'v' (kısaltma)
         };
     }
 }
@@ -272,27 +314,29 @@ class GameServer {
     spawnBot() {
         const id = 'bot_' + generateId();
         const names = ['Alex', 'Steve', 'Wormy', 'Pro', 'Noob', 'Hunter', 'Ghost', 'Viper', 'Legend', 'Rex'];
-        const skins = ['yellow', 'red', 'blue', 'green', 'tr'];
+        const skins = ['yellow', 'red', 'blue', 'green', 'tr', 'purple', 'cyan'];
         const snake = new Snake(
             id,
             names[Math.floor(Math.random() * names.length)],
             skins[Math.floor(Math.random() * skins.length)],
             true
         );
-        snake.bodyPartsCount = Math.random() > 0.5 ? 80 : 20;
+        // Botlar rastgele büyüklükte başlasın
+        snake.bodyPartsCount = 20 + Math.floor(Math.random() * 50);
+        snake.score = snake.bodyPartsCount * 10;
         this.snakes.set(id, snake);
     }
 
     manageBots() {
         const activeBots = Array.from(this.snakes.values()).filter(s => s.isBot && s.isActive);
-        while (activeBots.length < MAX_BOTS) {
+        // Eksik bot varsa tamamla
+        if (activeBots.length < MAX_BOTS) {
             this.spawnBot();
-            activeBots.push({}); // Just to update count
         }
     }
 
     spawnFood() {
-        if (this.foods.size >= 2000) return;
+        if (this.foods.size >= 1500) return; // Maksimum yem sınırı
 
         const angle = Math.random() * Math.PI * 2;
         const dist = Math.sqrt(Math.random()) * (WORLD_RADIUS - 100);
@@ -312,8 +356,13 @@ class GameServer {
     }
 
     spawnFoodFromDeath(snake) {
+        // Ölen yılanın vücut parçalarından yem çıkar
         const positions = snake.getBodyPositions();
-        for (const pos of positions) {
+        // Tüm parçaları değil, her 2-3 parçada bir yem bırak (Performans için)
+        const step = Math.max(1, Math.floor(positions.length / 30)); 
+        
+        for (let i = 0; i < positions.length; i += step) {
+            const pos = positions[i];
             const food = new Food(this.foodIdCounter++, pos.x, pos.y, 'dead', 5);
             this.foods.set(food.id, food);
         }
@@ -323,46 +372,62 @@ class GameServer {
         const snakeList = Array.from(this.snakes.values()).filter(s => s.isActive);
 
         for (const snake of snakeList) {
-            if (!snake.isActive) continue;
-
             const headX = snake.x;
             const headY = snake.y;
-            const hitboxRadius = (snake.width / 2) * 0.7;
+            const hitboxRadius = (snake.width / 2) * 0.8; // Hitbox biraz daha küçük olsun
+
+            // 1. Yem Yeme
+            // Yemleri optimize etmek için sadece yakınındakileri kontrol etmek gerekir ama JS map döngüsü 2000 obje için hızlıdır.
+            // Yine de Snake'in "yeme yarıçapını" hesaplayalım.
+            const eatRadius = (snake.width / 2) + 10;
+            const eatRadiusSq = eatRadius * eatRadius; // Karekök almamak için
 
             // Food collision
-            for (const [foodId, food] of this.foods) {
-                const eatRadius = (snake.width / 2) + 20;
-                if (distance(headX, headY, food.x, food.y) < eatRadius) {
-                    // Apply food effect
-                    const mult = snake.getTotalMultiplier();
-                    let scoreGain = food.type === 'normal' ? 35 : (food.type === 'dead' ? 100 : 50);
-                    scoreGain *= mult * food.value;
-                    snake.score += scoreGain;
-                    snake.growPending += scoreGain * 0.0005;
+            // Map üzerinde dönerken silme işlemi yapmak tehlikelidir, toplanacakları listeye atalım
+            const foodsToEat = [];
 
-                    if (food.type !== 'normal' && food.type !== 'dead') {
-                        const durations = { '2x': 20, '5x': 15, '10x': 10 };
-                        snake.activeEffects[food.type] = durations[food.type] || 20;
-                    }
+            for (const food of this.foods.values()) {
+                const dx = headX - food.x;
+                const dy = headY - food.y;
+                const distSq = dx * dx + dy * dy;
 
-                    this.foods.delete(foodId);
+                if (distSq < eatRadiusSq) {
+                    foodsToEat.push(food);
                 }
             }
 
-            // Snake collision
+            for (const food of foodsToEat) {
+                 const mult = snake.getTotalMultiplier();
+                 let scoreGain = food.type === 'normal' ? 5 : (food.type === 'dead' ? 20 : 10);
+                 scoreGain *= mult * food.value;
+                 
+                 snake.score += scoreGain;
+                 snake.growPending += scoreGain * 0.01; // Büyüme oranını biraz kıstım
+
+                 if (food.type !== 'normal' && food.type !== 'dead') {
+                     const durations = { '2x': 20, '5x': 15, '10x': 10 };
+                     snake.activeEffects[food.type] = durations[food.type] || 20;
+                 }
+                 this.foods.delete(food.id);
+            }
+
+
+            // 2. Yılan Çarpışması
             for (const other of snakeList) {
                 if (other === snake || !other.isActive) continue;
 
-                const otherHitbox = (other.width / 2) * 0.7;
+                const otherHitbox = (other.width / 2) * 0.8;
                 const combinedRadius = hitboxRadius + otherHitbox;
+                const combinedRadiusSq = combinedRadius * combinedRadius;
 
-                // Head-to-head
-                const headDist = distance(headX, headY, other.x, other.y);
-                if (headDist < combinedRadius) {
-                    const myDist = distance(headX, headY, WORLD_CENTER, WORLD_CENTER);
-                    const otherDist = distance(other.x, other.y, WORLD_CENTER, WORLD_CENTER);
+                // Kafa kafaya çarpışma
+                const dx = headX - other.x;
+                const dy = headY - other.y;
+                const headDistSq = dx * dx + dy * dy;
 
-                    if (myDist > otherDist) {
+                if (headDistSq < combinedRadiusSq) {
+                    // Skor veya boyuta göre kazananı belirle
+                    if (snake.bodyPartsCount > other.bodyPartsCount) {
                         snake.hsCount++;
                         other.die();
                         this.spawnFoodFromDeath(other);
@@ -374,59 +439,83 @@ class GameServer {
                     continue;
                 }
 
-                // Head-to-body
+                // Gövdeye çarpma
+                // Diğer yılanın vücut pozisyonlarını al
+                // OPTİMİZASYON: Sadece kafa, diğer yılanın bounding box'ı içindeyse detaylı kontrol yap
+                if (Math.abs(headX - other.x) > 2000 || Math.abs(headY - other.y) > 2000) continue;
+
                 const bodyPositions = other.getBodyPositions();
-                for (let i = 2; i < bodyPositions.length; i++) {
+                // İlk birkaç boğumu atla (kafa kendisine çarpmaz mantığı diğer yılan için geçerli değil ama olsun)
+                let collisionFound = false;
+                
+                // Adımlayarak kontrol et (her noktayı kontrol etme, performans artışı)
+                const checkStep = Math.max(1, Math.floor(other.width / 15));
+
+                for (let i = 0; i < bodyPositions.length; i += checkStep) {
                     const part = bodyPositions[i];
-                    if (distance(headX, headY, part.x, part.y) < combinedRadius) {
+                    const pdx = headX - part.x;
+                    const pdy = headY - part.y;
+                    
+                    if (pdx*pdx + pdy*pdy < combinedRadiusSq) {
                         snake.die();
                         other.killCount++;
                         this.spawnFoodFromDeath(snake);
+                        collisionFound = true;
                         break;
                     }
                 }
+                if (collisionFound) break;
             }
         }
     }
 
     tick(dt) {
-        // Update all snakes
+        // Snake update
         for (const snake of this.snakes.values()) {
             snake.update(dt);
         }
 
-        // Clean up dead snakes (bots only)
+        // Ölü botları temizle
         for (const [id, snake] of this.snakes) {
             if (!snake.isActive && snake.isBot) {
                 this.snakes.delete(id);
             }
         }
 
-        // Manage bots and food
         this.manageBots();
-        while (this.foods.size < 1500) {
+        
+        // Yem spawnla (sabit sayıya tamamla)
+        // Her tick hepsini spawnlama, performans için tick başına 5-10 tane ekle
+        let spawnCount = 0;
+        while (this.foods.size < 1200 && spawnCount < 5) {
             this.spawnFood();
+            spawnCount++;
         }
 
-        // Update dead food lifetime
+        // Ölü yem süresi (dead food decay)
         for (const [id, food] of this.foods) {
             if (food.type === 'dead') {
                 food.lifeTime += dt;
-                if (food.lifeTime > 30) {
+                if (food.lifeTime > 20) { // 20 saniye sonra kaybolsun
                     this.foods.delete(id);
                 }
             }
         }
 
-        // Check collisions
         this.checkCollisions();
     }
 
     getState() {
-        const snakes = Array.from(this.snakes.values())
-            .filter(s => s.isActive)
-            .map(s => s.toState());
+        // Sadece aktif yılanları gönder
+        const snakes = [];
+        for (const s of this.snakes.values()) {
+            if (s.isActive) snakes.push(s.toState());
+        }
 
+        // Yemleri gönder
+        // OPTİMİZASYON: Yemlerin hepsini her seferinde göndermek yerine
+        // sadece ekrandakileri göndermek en iyisidir ama bu kodda o kadar karmaşıklığa girmeden
+        // basitçe array'e çeviriyoruz. Yem sayısı çoksa burası şişebilir.
         const foods = Array.from(this.foods.values()).map(f => f.toState());
 
         return { snakes, foods };
@@ -491,12 +580,15 @@ let lastStateBroadcast = Date.now();
 
 setInterval(() => {
     const now = Date.now();
-    const dt = (now - lastTime) / 1000;
+    let dt = (now - lastTime) / 1000;
     lastTime = now;
+    
+    // Lag spike koruması: Eğer sunucu çok takılırsa dt devasa olabilir, onu sınırla
+    if (dt > 0.1) dt = 0.1;
 
     game.tick(dt);
 
-    // Broadcast state at lower rate
+    // Broadcast state
     if (now - lastStateBroadcast >= 1000 / STATE_SEND_RATE) {
         const state = game.getState();
         const stateMessage = JSON.stringify({ type: 'state', ...state });
